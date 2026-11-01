@@ -1,72 +1,84 @@
 #include <iostream>
+#include <exception>
+#include <string>
 
 #include <boost/json.hpp>
 
-int main() {
-    std::cerr << "hello!" << std::endl;
+#include "transport/StdioTransport.hpp"
+#include "model/JsonRPCRequest.hpp"
+#include "model/JsonRPCResponse.hpp"
+#include "model/JsonRPCError.hpp"
 
-    auto jvalue = boost::json::parse("{ \"key\": \"value\" }");
+JsonRPCResponse compute(const JsonRPCRequest& request) {
 
-    if (!jvalue.is_object()) {
-        std::cerr << "Invalid object" << std::endl;
-        return 1;
+    JsonRPCResponse response;
+
+    //response.result = std::make_unique<boost::json::value>(request.method);
+
+    std::string method = request.method;
+
+    if (method == "ping") {
+        response.result = std::make_unique<boost::json::value>(boost::json::object());
+    } else {
+        throw JsonRPCError("Method not found", -32601);
     }
 
-    auto& jobject = jvalue.as_object();
+    return response;
+}
 
-    std::cerr << "jobject.count(\"key\") == " << jobject.count("key") << std::endl;
-    std::cerr << "jobject.at(\"key\") == " << jobject.at("key") << std::endl;
-    std::cerr << "jobject.at(\"key\").is_string() == " << jobject.at("key").is_string() << std::endl;
-    std::cerr << "jobject.at(\"key\").as_string() == " << jobject.at("key").as_string() << std::endl;
-    
-    std::cerr << std::endl;
+std::string callback(const std::string& str)
+{
 
-    std::cerr << "jobject.count(\"key1\") == " << jobject.count("key1") << std::endl;
-    std::cerr << "jobject.if_contains(\"key1\") == " << jobject.if_contains("key1") << std::endl;
+    JsonRPCRequest request;
+    JsonRPCResponse response;
 
     try {
-        std::cerr << "jobject.at(\"key1\") == " << jobject.at("key1") << std::endl;
+        request = JsonRPCRequest::DeserializeFromJson(str);
     }
-    catch (const boost::system::system_error& err) {
-        std::cerr << "jobject.at(\"key1\") == " << err.what() << std::endl;
+    catch (const JsonRPCError& er) {
+        response.result = JsonRPCResponse::Error{ er.what(), er.code };
     }
-
-    jobject["key1"];
-    std::cerr << "jobject[\"key1\"]" << std::endl;
-    std::cerr << "jobject.count(\"key1\") == " << jobject.count("key1") << std::endl;
-    std::cerr << "jobject.if_contains(\"key1\") == " << jobject.if_contains("key1") << std::endl;
-
-    std::error_code err;
-    jvalue = boost::json::parse("{ \"key\": ", err);
-    if (err) {
-        std::cerr << err.message() << std::endl;
+    catch (...) {
+        response.result = JsonRPCResponse::Error{ "Unknown error", -32603 };
     }
 
-    err.clear();
-    auto jvalue1 = boost::json::parse("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}", err);
-    if (err) {
-        std::cerr << err.message() << std::endl;
-        return 1;
+    if (std::holds_alternative<JsonRPCResponse::Error>(response.result)) {
+        response.id = request.id;
+        return boost::json::serialize(boost::json::value_from(response));
+    }
+    
+    try {
+        response = compute(request);
+    }
+    catch (const JsonRPCError& er) {
+        response.result = JsonRPCResponse::Error{er.what(), er.code};
+    }
+    catch (...) {
+        response.result = JsonRPCResponse::Error{ "Unknown error", -32603 };
     }
 
-    if (!jvalue1.if_object()) {
-        std::cerr << "Not a JSON object" << std::endl;
-        return 1;
+    response.id = request.id;
+
+    if (response.IsNotification())
+    {
+        return "";
     }
 
-    auto& jobject1 = jvalue1.as_object();
+    return boost::json::serialize(boost::json::value_from(response));
 
-    if (!jobject1.if_contains("method")) {
-        std::cerr << "method string does not exist" << std::endl;
-        return 1;
-    }
+    //JsonRPCRequest request1 = request;
 
-    if (!jobject1.at("method").is_string()) {
-        std::cerr << "method field is not a string" << std::endl;
-        return 1;
-    }
+    //request1.params->as_object()["hi"] = "hello";
 
-    std::cerr << "Method: " << jobject1.at("method").as_string() << std::endl;
+    //std::cout << boost::json::serialize(*request.params) << std::endl;
+    //std::cout << boost::json::serialize(*request1.params) << std::endl;
+}
+
+int main() {
+
+    StdioTransport stdioTransport = StdioTransport(std::cin, std::cout);
+    stdioTransport.Start(callback);
+    
 
     return 0;
 }
